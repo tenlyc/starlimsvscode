@@ -83,6 +83,12 @@ This extension contributes the following settings:
 - `STARLIMS.browser`: Browser for debugging forms (only Chrome or Edge supported)
 - `STARLIMS.rootPath`: Path for storing temporary files (downloaded forms and scripts)
 
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+For information about packaging and publishing releases, see [PACKAGING.md](PACKAGING.md).
+
 ## Known Issues
 
 - Please let us know under "Issues"
