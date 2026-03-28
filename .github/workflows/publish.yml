@@ -8,6 +8,8 @@ on:
 jobs:
   cd:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout to branch
@@ -27,10 +29,10 @@ jobs:
         run: npm ci
 
       - name: Install vsce
-        run: npm i -g  @vscode/vsce
+        run: npm i -g @vscode/vsce
 
       - name: Bump version
-        run: npm version patch
+        run: npm version patch --no-git-tag-version
 
       - name: Calculate version
         id: calculateVersion
@@ -38,13 +40,22 @@ jobs:
           APP_VERSION=`cat package.json | jq ".version" -M | sed 's/\"//g'`
           echo "AppVersion=$APP_VERSION" >> $GITHUB_OUTPUT
           echo "app version = v$APP_VERSION"
-      - name: Build VSIX package
-        run: npm run build -- -o vscode-starlims.v${{ steps.calculateVersion.outputs.AppVersion }}.vsix
 
-      - uses: lannonbr/vsce-action@4.0.0
-        name: Publish extension package
-        with:
-          args: "publish -p $VSCODE_MARKETPLACE_TOKEN"
+      - name: Commit and push version bump
+        run: |
+          git add package.json
+          git commit -m "chore: bump version to ${{ steps.calculateVersion.outputs.AppVersion }} [skip ci]"
+          git push
+
+      - name: Build backend package
+        working-directory: ./src/backend
+        run: ./create-packages.sh
+
+      - name: Build VSIX package
+        run: vsce package -o vscode-starlims.v${{ steps.calculateVersion.outputs.AppVersion }}.vsix
+
+      - name: Publish extension package
+        run: vsce publish -p $VSCODE_MARKETPLACE_TOKEN --packagePath vscode-starlims.v${{ steps.calculateVersion.outputs.AppVersion }}.vsix
         env:
           VSCODE_MARKETPLACE_TOKEN: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
 
