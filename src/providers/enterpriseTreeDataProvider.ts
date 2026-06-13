@@ -64,7 +64,9 @@ export class EnterpriseTreeDataProvider implements vscode.TreeDataProvider<TreeE
       this.resultItems = await this.service.searchForItems(searchString, itemType, bExactMatch);
     }
     if (this.resultItems.length === 0) {
-      vscode.window.showErrorMessage("No items found!");
+      if (!bSilent) {
+        vscode.window.showErrorMessage("No items found!");
+      }
       return;
     } else {
       if (bSilent === false) {
@@ -72,7 +74,23 @@ export class EnterpriseTreeDataProvider implements vscode.TreeDataProvider<TreeE
         this.treeItems = await this.buildTreeFromSearchResults(this.resultItems);
         this._onDidChangeTreeData.fire(null);
       }
-      return this.resultItems[0];
+      // build a proper TreeEnterpriseItem from the raw search result
+      const rawItem = this.resultItems[0] as any;
+      const itemUri = rawItem.uri || rawItem.URI;
+      const treeItem = new TreeEnterpriseItem(
+        rawItem.type,
+        rawItem.name || rawItem.label || "",
+        rawItem.scriptLanguage || "",
+        itemUri,
+        vscode.TreeItemCollapsibleState.None,
+        undefined,
+        undefined,
+        rawItem.guid,
+        rawItem.language
+      );
+      treeItem.contextValue = rawItem.type;
+      treeItem.checkedOutBy = rawItem.checkedOutBy;
+      return treeItem;
     }
   }
 

@@ -4352,24 +4352,46 @@ Please provide:
   // register the GoToServerScript command
   vscode.commands.registerCommand(
     "STARLIMS.GoToServerScript",
-    async () => {
+    async (itemName?: string | vscode.Uri) => {
+      try {
+      // VS Code may pass a Uri object from context menu, convert to string
+      const itemNameStr = itemName ? String(itemName) : undefined;
       var editor = vscode.window.activeTextEditor;
       if (!editor) {
         return;
       }
 
-      // get the script name from editor cursor position
-      const position = editor.selection.active;
-      let scriptName = editor.document.getText(editor.document.getWordRangeAtPosition(position, /[\w\.]+/));
+      // get the script name: use passed itemName if it's a real script name (not a URI)
+      let scriptName: string | undefined;
+      if (itemNameStr && !itemNameStr.startsWith("file://")) {
+        scriptName = itemNameStr;
+      }
+
+      // if no valid itemName, try to extract from current line (like GoToItem does)
+      if (!scriptName) {
+        const line = editor.document.lineAt(editor.selection.active.line).text;
+        scriptName = extractNameFromLine(line, "STARLIMS.GoToServerScript");
+      }
+
+      // fallback to word at cursor
+      if (!scriptName) {
+        const position = editor.selection.active;
+        const wordRange = editor.document.getWordRangeAtPosition(position, /[\w\.]+/);
+        if (!wordRange) {
+          vscode.window.showErrorMessage("No word found at cursor position.");
+          return;
+        }
+        scriptName = editor.document.getText(wordRange);
+      }
       let aScriptNameComponents = scriptName.split(".");
 
       // remove first and main_ component (script type in log file)
       if (aScriptNameComponents[0] === "ServerScript") {
         aScriptNameComponents.shift();
-        if (aScriptNameComponents[2] === "main_") {
+        if (aScriptNameComponents.length > 0 && aScriptNameComponents[aScriptNameComponents.length - 1] === "main_") {
           aScriptNameComponents.pop();
-          scriptName = aScriptNameComponents.join(".");
         }
+        scriptName = aScriptNameComponents.join(".");
       }
 
       let found = false;
@@ -4378,7 +4400,7 @@ Please provide:
         found = false;
       }
       else if (aScriptNameComponents.length === 1) {
-        // this is probably a procedure in the current script
+        // try to find as a procedure in the current script first
         found = findProcedureInEditor(scriptName, editor);
         if (!found) {
           // it could be in an :INCLUDEd library
@@ -4388,10 +4410,16 @@ Please provide:
             if (found) { break; }
           }
         }
+        if (!found) {
+          // try to find as a server script on the server
+          found = await findScriptOnServer(scriptName, undefined);
+        }
       } else {
-        // this is a server script or external script procedure, search on server to find the main script
-        const procedureName = aScriptNameComponents.length > 2 ? aScriptNameComponents[2] : undefined;
-        found = await findScriptOnServer(scriptName, procedureName);
+        // multi-component name: e.g. "Category.ScriptName" or "Category.ScriptName.ProcedureName"
+        // first part is category/folder, second part is the actual script name
+        const serverScriptName = aScriptNameComponents[1];
+        const procedureName = aScriptNameComponents.length >= 3 ? aScriptNameComponents[2] : undefined;
+        found = await findScriptOnServer(serverScriptName, procedureName);
       }
 
       if (!found) {
@@ -4399,19 +4427,41 @@ Please provide:
       }
 
       async function findScriptOnServer(scriptName: string, procedureName: string | undefined) {
+        // strategy 1: Search API - exact match with itemType "SS"
         let itemFound = await enterpriseTreeProvider.search(scriptName, "SS", true, false, true);
+
+        // strategy 2: Search API - fuzzy match with itemType "SS"
+        if (!itemFound) {
+          itemFound = await enterpriseTreeProvider.search(scriptName, "SS", true, false, false);
+        }
+
+        // strategy 3: Search API - fuzzy match without itemType filter
+        if (!itemFound) {
+          itemFound = await enterpriseTreeProvider.search(scriptName, "", true, false, false);
+        }
+
+        // strategy 4: GlobalSearch API - with itemType "SS"
+        if (!itemFound) {
+          itemFound = await enterpriseTreeProvider.search(scriptName, "SS", true, true, false);
+        }
+
+        // strategy 5: GlobalSearch API - without itemType filter
+        if (!itemFound) {
+          itemFound = await enterpriseTreeProvider.search(scriptName, "", true, true, false);
+        }
+
         if (itemFound) {
           await vscode.commands.executeCommand("STARLIMS.GetLocal", itemFound);
           // get new editor
           editor = vscode.window.activeTextEditor;
           if (editor && procedureName) {
             // find procedure in the newly opened editor
-            return findProcedureInEditor(procedureName, editor);
+            const procFound = findProcedureInEditor(procedureName, editor);
+            return procFound;
           }
           return true;
-        } {
-          return false;
         }
+        return false;
       }
 
       function findProcedureInEditor(procedureName: string, editor: vscode.TextEditor): boolean {
@@ -4439,36 +4489,66 @@ Please provide:
 
         return libraryNames;
       }
+      } catch {
+        // Error in GoToServerScript command
+      }
     }
   );
 
   // register the GoToDataSource command
   vscode.commands.registerCommand(
     "STARLIMS.GoToDataSource",
-    async () => {
+    async (itemName?: string | vscode.Uri) => {
+      try {
+      const itemNameStr = itemName ? String(itemName) : undefined;
       var editor = vscode.window.activeTextEditor;
       if (editor) {
-        // get the script name from editor cursor position
-        const position = editor.selection.active;
-        let scriptName = editor.document.getText(editor.document.getWordRangeAtPosition(position, /[\w\.]+/));
+        // get the script name: use passed itemName if it's a real name (not a URI)
+        let scriptName: string | undefined;
+        if (itemNameStr && !itemNameStr.startsWith("file://")) {
+          scriptName = itemNameStr;
+        }
+
+        // if no valid itemName, try to extract from current line
+        if (!scriptName) {
+          const line = editor.document.lineAt(editor.selection.active.line).text;
+          scriptName = extractNameFromLine(line, "STARLIMS.GoToDataSource");
+        }
+
+        // fallback to word at cursor
+        if (!scriptName) {
+          const position = editor.selection.active;
+          const wordRange = editor.document.getWordRangeAtPosition(position, /[\w\.]+/);
+          if (!wordRange) {
+            vscode.window.showErrorMessage("No word found at cursor position.");
+            return;
+          }
+          scriptName = editor.document.getText(wordRange);
+        }
         let aScriptNameComponents = scriptName.split(".");
 
         // remove first and main_ component (script type in log file)
         if (aScriptNameComponents[0] === "DataSource") {
           aScriptNameComponents.shift();
-          if (aScriptNameComponents[2] === "main_") {
+          if (aScriptNameComponents.length > 0 && aScriptNameComponents[aScriptNameComponents.length - 1] === "main_") {
             aScriptNameComponents.pop();
-            scriptName = aScriptNameComponents.join(".");
           }
+          scriptName = aScriptNameComponents.join(".");
         }
 
-        // use search to find the script
-        const itemFound = await enterpriseTreeProvider.search(scriptName, "DS", true, false, true);
+        // use search to find the script, try exact match first then fuzzy
+        let itemFound = await enterpriseTreeProvider.search(scriptName, "DS", true, false, true);
+        if (!itemFound) {
+          itemFound = await enterpriseTreeProvider.search(scriptName, "DS", true, false, false);
+        }
 
         // open the first item found
         if (itemFound !== undefined) {
           vscode.commands.executeCommand("STARLIMS.GetLocal", itemFound);
         }
+      }
+      } catch {
+        // Error in GoToDataSource command
       }
     }
   );
@@ -4476,20 +4556,47 @@ Please provide:
   // register the GoToClientScript command
   vscode.commands.registerCommand(
     "STARLIMS.GoToClientScript",
-    async () => {
+    async (itemName?: string | vscode.Uri) => {
+      try {
+      const itemNameStr = itemName ? String(itemName) : undefined;
       var editor = vscode.window.activeTextEditor;
       if (editor) {
-        // get the script name from editor cursor position
-        const position = editor.selection.active;
-        const scriptName = editor.document.getText(editor.document.getWordRangeAtPosition(position, /[\w\.]+/));
+        // get the script name: use passed itemName if it's a real name (not a URI)
+        let scriptName: string | undefined;
+        if (itemNameStr && !itemNameStr.startsWith("file://")) {
+          scriptName = itemNameStr;
+        }
 
-        // use search to find the script
-        const itemFound = await enterpriseTreeProvider.search(scriptName, "CS", true, false, true);
+        // if no valid itemName, try to extract from current line
+        if (!scriptName) {
+          const line = editor.document.lineAt(editor.selection.active.line).text;
+          scriptName = extractNameFromLine(line, "STARLIMS.GoToClientScript");
+        }
+
+        // fallback to word at cursor
+        if (!scriptName) {
+          const position = editor.selection.active;
+          const wordRange = editor.document.getWordRangeAtPosition(position, /[\w\.]+/);
+          if (!wordRange) {
+            vscode.window.showErrorMessage("No word found at cursor position.");
+            return;
+          }
+          scriptName = editor.document.getText(wordRange);
+        }
+
+        // use search to find the script, try exact match first then fuzzy
+        let itemFound = await enterpriseTreeProvider.search(scriptName, "CS", true, false, true);
+        if (!itemFound) {
+          itemFound = await enterpriseTreeProvider.search(scriptName, "CS", true, false, false);
+        }
 
         // open the first item found
         if (itemFound !== undefined) {
           vscode.commands.executeCommand("STARLIMS.GetLocal", itemFound);
         }
+      }
+      } catch {
+        // Error in GoToClientScript command
       }
     }
   );
@@ -4497,20 +4604,47 @@ Please provide:
   // register the GoToForm command
   vscode.commands.registerCommand(
     "STARLIMS.GoToForm",
-    async () => {
+    async (itemName?: string | vscode.Uri) => {
+      try {
+      const itemNameStr = itemName ? String(itemName) : undefined;
       var editor = vscode.window.activeTextEditor;
       if (editor) {
-        // get the form name from editor cursor position
-        const position = editor.selection.active;
-        const formName = editor.document.getText(editor.document.getWordRangeAtPosition(position, /[\w\.]+/));
+        // get the form name: use passed itemName if it's a real name (not a URI)
+        let formName: string | undefined;
+        if (itemNameStr && !itemNameStr.startsWith("file://")) {
+          formName = itemNameStr;
+        }
 
-        // use search to find the script
-        const itemFound = await enterpriseTreeProvider.search(formName, "FORMCODEBEHIND", true, false, true);
+        // if no valid itemName, try to extract from current line
+        if (!formName) {
+          const line = editor.document.lineAt(editor.selection.active.line).text;
+          formName = extractNameFromLine(line, "STARLIMS.GoToForm");
+        }
+
+        // fallback to word at cursor
+        if (!formName) {
+          const position = editor.selection.active;
+          const wordRange = editor.document.getWordRangeAtPosition(position, /[\w\.]+/);
+          if (!wordRange) {
+            vscode.window.showErrorMessage("No word found at cursor position.");
+            return;
+          }
+          formName = editor.document.getText(wordRange);
+        }
+
+        // use search to find the script, try exact match first then fuzzy
+        let itemFound = await enterpriseTreeProvider.search(formName, "FORMCODEBEHIND", true, false, true);
+        if (!itemFound) {
+          itemFound = await enterpriseTreeProvider.search(formName, "FORMCODEBEHIND", true, false, false);
+        }
 
         // open the first item found
         if (itemFound !== undefined) {
           vscode.commands.executeCommand("STARLIMS.GetLocal", itemFound);
         }
+      }
+      } catch {
+        // Error in GoToForm command
       }
     }
   );
@@ -4522,11 +4656,11 @@ Please provide:
       const autoDetectConfig = [
         {
           command: "STARLIMS.GoToServerScript",
-          keywords: ["lims.CallServer", "ExecFunction", "CreateUDObject", "SubmitToBatch", "DoProc", "ServerScript"]
+          keywords: ["lims\\.CallServer", "ExecFunction", "CreateUDObject", "SubmitToBatch", "DoProc", "ServerScript"]
         },
         {
           command: "STARLIMS.GoToDataSource",
-          keywords: ["lims.GetData", "DataSource"]
+          keywords: ["lims\\.GetData", "DataSource"]
         },
         {
           command: "STARLIMS.GoToForm",
@@ -4544,13 +4678,50 @@ Please provide:
         const line = editor.document.lineAt(editor.selection.active.line).text;
         const match = autoDetectConfig.find(config => new RegExp(config.keywords.join("|"), "i").test(line));
         if (match) {
-          vscode.commands.executeCommand(match.command);
+          // try to extract the item name from common STARLIMS function call patterns
+          const extractedName = extractNameFromLine(line, match.command);
+          vscode.commands.executeCommand(match.command, extractedName);
         } else {
           vscode.window.showErrorMessage("Could not find a STARLIMS item to navigate to.");
         }
       }
     }
   );
+
+  /**
+   * Extracts an item name from a STARLIMS code line based on common patterns.
+   * e.g. ExecFunction("SCRIPT.Proc", {...}) -> "SCRIPT.Proc"
+   * e.g. lims.GetData("DS_NAME", {...}) -> "DS_NAME"
+   * e.g. #include "LIB_NAME" -> "LIB_NAME"
+   */
+  function extractNameFromLine(line: string, command: string): string | undefined {
+    // pattern 1: function call with quoted string as first arg
+    // matches: ExecFunction("name", ...) / lims.GetData("name", ...) / lims.CallServer("name", ...)
+    const funcCallMatch = line.match(/(?:ExecFunction|CreateUDObject|SubmitToBatch|DoProc|lims\.CallServer|lims\.GetData|DataSource)\s*\(\s*"([^"]+)"/i);
+    if (funcCallMatch) {
+      return funcCallMatch[1];
+    }
+
+    // pattern 2: #include "name"
+    const includeMatch = line.match(/#include\s+"([^"]+)"/i);
+    if (includeMatch) {
+      return includeMatch[1];
+    }
+
+    // pattern 3: ServerScript("name")
+    const serverScriptMatch = line.match(/ServerScript\s*\(\s*"([^"]+)"/i);
+    if (serverScriptMatch) {
+      return serverScriptMatch[1];
+    }
+
+    // pattern 4: Form("name")
+    const formMatch = line.match(/Form\s*\(\s*"([^"]+)"/i);
+    if (formMatch) {
+      return formMatch[1];
+    }
+
+    return undefined;
+  }
 
   // register the GlobalCodeSearch command
   vscode.commands.registerCommand(

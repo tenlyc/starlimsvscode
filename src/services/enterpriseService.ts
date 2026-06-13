@@ -1854,7 +1854,8 @@ export class EnterpriseService implements IEnterpriseService {
 
       const { success, data }: { success: boolean; data: any } = result;
       if (success) {
-        return { ok: true, data: Array.isArray(data?.items) ? data.items : [] };
+        const items = Array.isArray(data?.items) ? data.items : [];
+        return { ok: true, data: items };
       }
 
       return {
