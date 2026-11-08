@@ -901,12 +901,14 @@ export class StarlimsAutomationService {
     const itemLookup = await this.enterpriseService.getEnterpriseItemsResult(normalizedUri);
     const item = this.getExactItemMatch(itemLookup.data ?? [], normalizedUri);
     if (!item) {
-      // Guide/Resources are auto-saved when the form XML is checked in - no explicit save needed
-      if (/\/Guide\/|\/Resources\//i.test(normalizedUri)) {
+      // Guide is auto-saved when the form XML is checked in - no explicit save needed.
+      // Resources are NOT auto-saved: they have their own SaveCode backend path
+      // (HTMLFORMRESOURCES / XFDFORMRESOURCES) and must be saved explicitly.
+      if (/\/Guide\//i.test(normalizedUri)) {
         return {
           ok: true,
           autoSaved: true,
-          info: "Guide and Resources are auto-saved when the form XML is checked in. No explicit save needed.",
+          info: "Guide is auto-saved when the form XML is checked in. No explicit save needed.",
           localPath: normalizedLocalPath,
           serverName: this.enterpriseService.getCurrentServerName(),
           uri: normalizedUri
