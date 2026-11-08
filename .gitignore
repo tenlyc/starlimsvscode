@@ -1,4 +1,4 @@
-﻿out
+out
 node_modules
 .vscode-test/
 *.vsix
@@ -9,6 +9,7 @@ dist/*.js
 dist/*.js.map
 dist/*.css
 dist/*.sdp
+dist/SCM_API.version.txt
 .vscode/*
 .DS_Store
 .vs/*

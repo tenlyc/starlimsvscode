@@ -3076,7 +3076,54 @@ Please provide:
       // dist/SCM_API.sdp when the server runs an older API. Runs at activation and
       // whenever the selected server changes, so switching servers upgrades the
       // backend without restarting VS Code.
+      //
+      // The SCM_API backend version is decoupled from the extension version in
+      // package.json so that bumping the extension does NOT redeploy the backend
+      // on every developer machine that shares a STARLIMS server. The target
+      // backend version is read from dist/SCM_API.version.txt (copied from
+      // src/backend/SCM_API/version.txt by webpack). The server is only upgraded
+      // when its version is strictly OLDER than the packaged one - a server that
+      // already runs the same or a newer backend is left untouched.
       let backendVersionCheck: Promise<void> | undefined;
+
+      // Compares two dotted numeric versions (X.Y.Z). Returns a negative number
+      // when a < b, 0 when equal, positive when a > b. Missing segments count
+      // as 0; non-numeric segments fall back to string comparison so an
+      // unexpected format never throws and never triggers a downgrade.
+      function compareBackendVersions(a: string, b: string): number {
+        const pa = String(a).trim().split(".");
+        const pb = String(b).trim().split(".");
+        const len = Math.max(pa.length, pb.length);
+        for (let i = 0; i < len; i++) {
+          const sa = pa[i] ?? "0";
+          const sb = pb[i] ?? "0";
+          const na = Number(sa);
+          const nb = Number(sb);
+          if (Number.isFinite(na) && Number.isFinite(nb)) {
+            if (na !== nb) { return na - nb; }
+          } else if (sa !== sb) {
+            return sa < sb ? -1 : 1;
+          }
+        }
+        return 0;
+      }
+
+      // Reads the packaged SCM_API backend version from dist/SCM_API.version.txt.
+      // Falls back to the extension version when the file is missing (e.g. an
+      // older build) so the upgrade path keeps working.
+      function getPackagedBackendVersion(): string {
+        try {
+          const versionFile = context.asAbsolutePath("dist/SCM_API.version.txt");
+          if (fs.existsSync(versionFile)) {
+            const v = fs.readFileSync(versionFile, "utf8").trim();
+            if (v) { return v; }
+          }
+        } catch (e) {
+          console.error("Could not read dist/SCM_API.version.txt:", e);
+        }
+        return version;
+      }
+
       function ensureBackendUpToDate(): Promise<void> {
         if (!backendVersionCheck) {
           backendVersionCheck = (async () => {
@@ -3086,7 +3133,11 @@ Please provide:
                 vscode.window.showWarningMessage('STARLIMS VS Code API is not reachable. Please check connection info or install API package. See extension README for installation instructions.');
                 return;
               }
-              if (version === apiVersion) {
+              const packagedVersion = getPackagedBackendVersion();
+              // Only upgrade when the server is strictly older. Equal or newer
+              // servers are left alone, so teammates running a newer backend do
+              // not get downgraded by someone with an older extension build.
+              if (compareBackendVersions(apiVersion, packagedVersion) >= 0) {
                 return;
               }
               const sdpPackage = context.asAbsolutePath("dist/SCM_API.sdp");
@@ -3096,7 +3147,7 @@ Please provide:
               }
               await executeWithProgress(async () => {
                 await enterpriseService.upgradeBackend(sdpPackage);
-                const selection = await vscode.window.showInformationMessage(`Backend API upgraded successfully. We recommend that you restart Visual Studio Code.`,
+                const selection = await vscode.window.showInformationMessage(`Backend API upgraded from ${apiVersion} to ${packagedVersion}. We recommend that you restart Visual Studio Code.`,
                   'Restart', 'Cancel');
                 if (selection === "Restart") {
                   await vscode.commands.executeCommand("workbench.action.reloadWindow");

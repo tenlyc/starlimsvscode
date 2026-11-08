@@ -115,6 +115,13 @@ const webviewConfig = {
           to: _resolve(__dirname, "dist")
         },
         {
+          // SCM_API backend version, decoupled from package.json. Read by
+          // extension.ts ensureBackendUpToDate() to decide whether the server
+          // needs an upgrade. Bumped by hand only when the backend changes.
+          from: "./src/backend/SCM_API/version.txt",
+          to: _resolve(__dirname, "dist/SCM_API.version.txt")
+        },
+        {
           from: "./resources/instructions",
           to: _resolve(__dirname, "dist/instructions")
         }
